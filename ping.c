@@ -16,6 +16,7 @@
 #define ICMP_HDRLEN 8
 
 unsigned short calculate_checksum(unsigned short *paddress, int len);
+void preparePing(char *packet, struct icmp *icmphdr, char *data, int datalen);
 int setupPing(struct icmp *icmphdr);
 int sendPing(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len);
 ssize_t receivePing(int socketfd, char* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len);
@@ -23,17 +24,21 @@ ssize_t receivePing(int socketfd, char* response, int response_len, struct socka
 // command: make clean && make all && ./parta
 
 int main(int argc, char* argv[]) {
-    struct icmp icmphdr; // ICMP-header
+    struct icmp icmphdr;
+    struct iphdr *iphdr_res;
+    struct icmphdr *icmphdr_res;
     struct sockaddr_in dest_in;
     struct timeval start, end;
+
     socklen_t addr_len;
+    ssize_t bytes_received = 0;
+
     char packet[IP_MAXPACKET], response[IP_MAXPACKET];
     char data[IP_MAXPACKET] = "Hello, this is a ping checkup, please response.\n";
-    int datalen = (strlen(data) + 1), socketfd = INVALID_SOCKET;
-    ssize_t bytes_received = 0;
-    double pingPongTime = 0.0;
 
-    printf("hello parta\n");
+    int datalen = (strlen(data) + 1), socketfd = INVALID_SOCKET;
+
+    double pingPongTime = 0.0;
 
     if (argc != 2)
     {
@@ -42,12 +47,6 @@ int main(int argc, char* argv[]) {
     }
 
     socketfd = setupPing(&icmphdr);
-
-    memcpy((packet), &icmphdr, ICMP_HDRLEN);
-    memcpy(packet + ICMP_HDRLEN, data, datalen);
-
-    icmphdr.icmp_cksum = calculate_checksum((unsigned short *)(packet), ICMP_HDRLEN + datalen);
-    memcpy((packet), &icmphdr, ICMP_HDRLEN);
 
     memset(&dest_in, 0, sizeof(dest_in));
     dest_in.sin_family = AF_INET;
@@ -59,20 +58,23 @@ int main(int argc, char* argv[]) {
 
     while(1)
     {
+        bzero(response, IP_MAXPACKET);
+        
+        preparePing(packet, &icmphdr, data, datalen);
+
         gettimeofday(&start, NULL);
         sendPing(socketfd, packet, datalen, &dest_in, sizeof(dest_in));
 
-        bzero(response, IP_MAXPACKET);
-
         bytes_received = receivePing(socketfd, response, sizeof(response), &dest_in, &addr_len);
+
         gettimeofday(&end, NULL);
 
         pingPongTime = ((end.tv_sec - start.tv_sec) * 1000) + (((double)end.tv_usec - start.tv_usec) / 1000);
 
-        struct iphdr *iphdr_res = (struct iphdr *)response;
-        struct icmp *icmphdr_res = (struct icmphdr *)((uint32_t *)iphdr_res + iphdr_res->ihl);
+        iphdr_res = (struct iphdr *)response;
+        icmphdr_res = (struct icmphdr *)(response + iphdr_res->ihl*4);
 
-        printf("%ld bytes from %s: icmp_seq = %d ttl = %d time = %0.3lf ms\n", bytes_received, argv[1], icmphdr_res->icmp_seq, iphdr_res->ttl, pingPongTime);
+        printf("%ld bytes from %s: icmp_seq = %d ttl = %d time = %0.3lf ms\n", bytes_received, argv[1], icmphdr_res->un.echo.sequence, iphdr_res->ttl, pingPongTime);
 
         sleep(1);
     }
@@ -85,12 +87,6 @@ int main(int argc, char* argv[]) {
 int setupPing(struct icmp *icmphdr) {
     int socketfd = INVALID_SOCKET;
 
-    icmphdr->icmp_type = ICMP_ECHO;
-    icmphdr->icmp_code = 0;
-    icmphdr->icmp_id = 18;
-    icmphdr->icmp_seq = 0;
-    icmphdr->icmp_cksum = 0;
-
     if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
     {
         fprintf(stderr, "To create a raw socket, the process needs to be run by Admin/root user.\n\n");
@@ -99,6 +95,25 @@ int setupPing(struct icmp *icmphdr) {
     }
 
     return socketfd;
+}
+
+void preparePing(char *packet, struct icmp *icmphdr, char *data, int datalen) {
+    static int seq = 0;
+
+    bzero(packet, IP_MAXPACKET);
+
+    icmphdr->icmp_type = ICMP_ECHO;
+    icmphdr->icmp_code = 0;
+    icmphdr->icmp_id = 18;
+    icmphdr->icmp_seq = seq++;
+    icmphdr->icmp_cksum = 0;
+
+    memcpy((packet), icmphdr, ICMP_HDRLEN);
+    memcpy(packet + ICMP_HDRLEN, data, datalen);
+
+    icmphdr->icmp_cksum = calculate_checksum((unsigned short *)(packet), ICMP_HDRLEN + datalen);
+    memcpy((packet), icmphdr, ICMP_HDRLEN);
+    memcpy(packet + ICMP_HDRLEN, data, datalen);
 }
 
 int sendPing(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len) {
