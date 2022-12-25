@@ -35,6 +35,7 @@ int main(int argc, char* argv[]) {
 
     char packet[IP_MAXPACKET], response[IP_MAXPACKET];
     char data[IP_MAXPACKET] = "Hello, this is a ping checkup, please response.\n";
+    char responseAddr[INET_ADDRSTRLEN];
 
     int datalen = (strlen(data) + 1), socketfd = INVALID_SOCKET;
 
@@ -59,7 +60,7 @@ int main(int argc, char* argv[]) {
     while(1)
     {
         bzero(response, IP_MAXPACKET);
-        
+
         preparePing(packet, &icmphdr, data, datalen);
 
         gettimeofday(&start, NULL);
@@ -74,7 +75,14 @@ int main(int argc, char* argv[]) {
         iphdr_res = (struct iphdr *)response;
         icmphdr_res = (struct icmphdr *)(response + iphdr_res->ihl*4);
 
-        printf("%ld bytes from %s: icmp_seq = %d ttl = %d time = %0.3lf ms\n", bytes_received, argv[1], icmphdr_res->un.echo.sequence, iphdr_res->ttl, pingPongTime);
+        inet_ntop(AF_INET, &(iphdr_res->saddr), responseAddr, INET_ADDRSTRLEN);
+
+        printf("%ld bytes from %s: icmp_seq = %d ttl = %d time = %0.3lf ms\n", 
+        bytes_received, 
+        responseAddr, 
+        icmphdr_res->un.echo.sequence, 
+        iphdr_res->ttl, 
+        pingPongTime);
 
         sleep(1);
     }
