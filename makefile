@@ -6,16 +6,16 @@ CFLAGS = -Wall -g
 all: ping better_ping watchdog
 
 ping: ping.o
-	$(CC) $(CFLAGS) $< -o parta
+	$(CC) $(CFLAGS) $< -o $@
 
-better_ping: betterr_ping.o
-	$(CC) $(CFLAGS) $< -o partb
+better_ping: better_ping.o
+	$(CC) $(CFLAGS) $< -o $@
 
 watchdog: watchdog.o
-	$(CC) $(CFLAGS) watchdog.c -o watchdog
+	$(CC) $(CFLAGS) $< -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $<
 
 clean:
-	rm -f *.o parta watchdog partb
+	rm -f *.o ping better_ping watchdog
