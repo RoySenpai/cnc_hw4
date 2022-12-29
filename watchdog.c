@@ -5,8 +5,11 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <string.h>
+#include <signal.h>
 #include <unistd.h>
 #include "ping_func.h"
+
+int isChild = 0;
 
 int main() {
     struct sockaddr_in wdAddress, pingAddress;
@@ -18,8 +21,6 @@ int main() {
     int socketfd = INVALID_SOCKET, pingSocket = INVALID_SOCKET;
 
     int timer = 0, bytes_received = 0;
-
-    printf("[WATCHDOG] Watchdog started.\n");
 
     socketfd = setupTCPSocket(&wdAddress);
 
@@ -34,8 +35,6 @@ int main() {
         perror("accept");
         exit(1);
     }
-
-    printf("[WATCHDOG] Monitoring ping via TCP port %d.\n", WATCHDOG_PORT);
 
     while (timer < WATCHDOG_TIMEOUT)
     {
@@ -56,13 +55,11 @@ int main() {
     
     if (timer == WATCHDOG_TIMEOUT)
     {
-        fprintf(stderr, "[WATCHDOG] Timeout detected.\n");
+        kill(getppid(), SIGUSR1);
         close(pingSocket);
         close(socketfd);
-        exit(1);
+        exit(0);
     }
-
-    printf("[WATCHDOG] Exit\n");
 
     close(pingSocket);
     close(socketfd);
@@ -102,8 +99,6 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
         perror("listen");
         exit(1);
     }
-
-    printf("[WATCHDOG] TCP socket successfully created, waiting for connection...\n");
 
     return socketfd;
 }

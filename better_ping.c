@@ -7,13 +7,14 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/time.h>
-#include <sys/poll.h>
-#include <string.h>
 #include <errno.h>
+#include <string.h>
 #include <unistd.h>
 #include "ping_func.h"
 
 int status, pid;
+
+char destaddress[IP4_MAXLEN];
 
 int main(int argc, char* argv[]) {
     struct icmp icmphdr;
@@ -36,6 +37,8 @@ int main(int argc, char* argv[]) {
 
     double pingPongTime = 0.0;
 
+    signal(SIGUSR1, sighandler);
+
     for (int i = 0; i < ICMP_ECHO_MSG_LEN - 1; ++i)
         data[i] = '1';
 
@@ -43,6 +46,8 @@ int main(int argc, char* argv[]) {
     datalen = (strlen(data) + 1);
 
     checkArguments(argc, argv[1], &dest_in, &addr_len);
+
+    strcpy(destaddress, argv[1]);
 
     socketfd = setupRawSocket();
     wdsocketfd = setupTCPSocket(&watchdogAddress);
@@ -56,7 +61,8 @@ int main(int argc, char* argv[]) {
     {
         execvp(args[0], args);
 
-        fprintf(stderr, "[PING] Error starting watchdog\n");
+        fprintf(stderr, "Error starting watchdog\n");
+        perror("execvp");
         exit(errno);
     }
 
@@ -74,8 +80,6 @@ int main(int argc, char* argv[]) {
             perror("connect");
             exit(1);
         }
-
-        usleep(WATCHDOG_WAITTIME);
 
         memset(&dest_in, 0, sizeof(dest_in));
         dest_in.sin_family = AF_INET;
@@ -95,12 +99,6 @@ int main(int argc, char* argv[]) {
             bytes_received = receiveICMPpacket(socketfd, response, sizeof(response), &dest_in, &addr_len);
 
             gettimeofday(&end, NULL);
-
-            if (!bytes_received)
-            {
-                printf("Server %s cannot be reached.\n", argv[1]);
-                exit(0);
-            }
 
             sendDataTCP(wdsocketfd, &OKSignal, sizeof(char));
 
@@ -128,6 +126,11 @@ int main(int argc, char* argv[]) {
     printf("child exit status is: %d\n", status);
 
     return 0;
+}
+
+void sighandler(int signum) {
+    printf("Server %s cannot be reached.\n", destaddress);
+    exit(0);
 }
 
 int setupTCPSocket(struct sockaddr_in *socketAddress) {
@@ -169,7 +172,7 @@ ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
 void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t* addr_len) {
     if (argc != 2)
     {
-        fprintf(stderr, "[PING] Usage: ./ping <ip address>\n");
+        fprintf(stderr, "Usage: ./ping <ip address>\n");
         exit(1);
     }
 
@@ -177,7 +180,7 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
 
     if (inet_pton(AF_INET, argv, &(dest_in->sin_addr)) <= 0)
     {
-        fprintf(stderr, "[PING] Invalid IP Address\n");
+        fprintf(stderr, "Invalid IP Address\n");
         exit(1);
     }
 
@@ -191,8 +194,8 @@ int setupRawSocket() {
 
     if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
     {
-        fprintf(stderr, "[PING] To create a raw socket, the process needs to be run by root user.\n");
         perror("socket");
+        fprintf(stderr, "To create a raw socket, the process needs to be run by root user.\n");
         exit(1);
     }
 
@@ -237,42 +240,16 @@ ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct
 
     while (!bytes_received)
     {
-        struct pollfd fd;
-        int res;
+        bytes_received = recvfrom(socketfd, response, response_len, 0, (struct sockaddr *)dest_in, len);
 
-        fd.fd = socketfd;
-        fd.events = POLLIN;
-        res = poll(&fd, 1, PING_CLK);
-
-        if (res == 0)
+        if (bytes_received == -1)
         {
-            if (waitpid(pid, &status, WNOHANG) != 0){
-                return 0;
-            }
-
-            continue;
-        }
-
-        else if (res == -1)
-        {
-            kill(pid, SIGKILL);
-            perror("poll");
+            perror("recvfrom");
             exit(1);
         }
 
-        else
-        {
-            bytes_received = recvfrom(socketfd, response, response_len, 0, (struct sockaddr *)dest_in, len);
-
-            if (bytes_received == -1)
-            {
-                perror("recvfrom");
-                exit(1);
-            }
-
-            else if (bytes_received > 0)
-                break;
-        }
+        else if (bytes_received > 0)
+            break;
     }
 
     return bytes_received;

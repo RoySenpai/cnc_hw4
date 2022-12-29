@@ -9,8 +9,8 @@
 /* Invalid socket constant */
 #define INVALID_SOCKET      -1
 
-/* IP Header length */
-#define IP4_HDRLEN          20
+/* Max length of an IPv4 address */
+#define IP4_MAXLEN          16
 
 /* ICMP Header length */
 #define ICMP_HDRLEN         8
@@ -30,18 +30,25 @@
 /* Watchdog TCP Port */
 #define WATCHDOG_PORT       3000
 
-/* Watchdog timeout in seconds */
+/* Watchdog timeout in seconds. */
 #define WATCHDOG_TIMEOUT    10
 
-/* Waittime for the watchdog program */
+/* Wait time for the watchdog program to initialize. */
 #define WATCHDOG_WAITTIME   (100 * PING_MS)
 
-/* How much to wait in ms before a new recvfrom starts */
-#define PING_CLK            50
-
-/* Defines the wait time in ms after receiving an ICMP ECHO REPLAY packet */
+/* Defines the wait time in ms after receiving an ICMP ECHO REPLAY packet. */
 #define PING_WAIT_TIME      (1000 * PING_MS)
 
+/*
+ * Function:  sighandler
+ * --------------------
+ * A function made solely to handle an incoming signal.
+ *  Used only with signal function.
+ *
+ *  signum: signal id, see SIG*.
+ * 
+ */
+void sighandler(int signum);
 
 /*
  * Function:  checkArguments
@@ -87,7 +94,7 @@ int setupRawSocket();
  * Prepares a ICMP ECHO Packet, with incrementing 
  *  sequence number. Used for Ping application.
  *
- *  packet: a buffer that the packet data will be written to.
+ *  packet: a buffer that the packet data #include <sys/poll.h>will be written to.
  * 
  *  icmphdr: a pointer to an ICMP header that will be written to
  *              to prepare the packet.
