@@ -1,11 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
-#include <string.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
+#include <errno.h>
+#include <string.h>
 #include <unistd.h>
 #include "ping_func.h"
 
@@ -36,11 +35,11 @@ int main() {
         exit(1);
     }
 
-    printf("[WATCHDOG] Ping connected\n");
+    printf("[WATCHDOG] Monitoring ping via TCP port %d.\n", WATCHDOG_PORT);
 
     while (timer < WATCHDOG_TIMEOUT)
     {
-        bytes_received = recv(pingSocket, &SignalOK, sizeof(char), MSG_DONTWAIT);
+        bytes_received = receiveDataTCP(pingSocket, &SignalOK, sizeof(char));
 
         if (bytes_received > 0)
         {
@@ -48,24 +47,22 @@ int main() {
             continue;
         }
 
-        if (errno == EWOULDBLOCK)
+        if (bytes_received == -1)
         {
-            struct pollfd p = { pingSocket, POLLIN, 0 };
-            int r = poll(&p, 1, 1000);
-
-            if (r == 1)
-                continue;
-
-            if (r == 0)
-                timer++;
+            sleep(1);
+            timer++;
         }
     }
     
     if (timer == WATCHDOG_TIMEOUT)
     {
-        fprintf(stderr, "[WATCHDOG] Timeout\n");
+        fprintf(stderr, "[WATCHDOG] Timeout detected.\n");
+        close(pingSocket);
+        close(socketfd);
         exit(1);
     }
+
+    printf("[WATCHDOG] Exit\n");
 
     close(pingSocket);
     close(socketfd);
@@ -106,30 +103,24 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
         exit(1);
     }
 
-    printf("[WATCHDOG] Socket successfully created.\n");
+    printf("[WATCHDOG] TCP socket successfully created, waiting for connection...\n");
 
     return socketfd;
 }
 
-ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
-    ssize_t sentd = send(socketfd, buffer, len, 0);
-
-    if (sentd == -1)
-    {
-        perror("send");
-        exit(1);
-    }
-
-    return sentd;
-}
-
 ssize_t receiveDataTCP(int socketfd, void *buffer, int len) {
-    ssize_t recvb = recv(socketfd, buffer, len, 0);
+    ssize_t recvb = recv(socketfd, buffer, len, MSG_DONTWAIT);
 
     if (recvb == -1)
     {
-        perror("recv");
-        exit(1);
+        if (errno != EWOULDBLOCK)
+        {
+            perror("recv");
+            exit(1);
+        }
+
+        else
+            return -1;
     }
 
     return recvb;

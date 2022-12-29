@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
         iphdr_res->ttl, 
         pingPongTime);
 
-        sleep(1);
+        usleep(PING_WAIT_TIME);
     }
 
     close(socketfd);

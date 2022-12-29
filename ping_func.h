@@ -21,6 +21,9 @@
 /* ICMP ECHO Message length */
 #define ICMP_ECHO_MSG_LEN   32
 
+/* A constant to convert 1 ms to 1000 microseconds. */
+#define PING_MS             1000
+
 /* Watchdog IP Address */
 #define WATCHDOG_IP         "127.0.0.1"
 
@@ -29,6 +32,15 @@
 
 /* Watchdog timeout in seconds */
 #define WATCHDOG_TIMEOUT    10
+
+/* Waittime for the watchdog program */
+#define WATCHDOG_WAITTIME   (100 * PING_MS)
+
+/* How much to wait in ms before a new recvfrom starts */
+#define PING_CLK            50
+
+/* Defines the wait time in ms after receiving an ICMP ECHO REPLAY packet */
+#define PING_WAIT_TIME      (1000 * PING_MS)
 
 
 /*

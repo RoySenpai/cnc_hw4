@@ -1,15 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
-#include <errno.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/poll.h>
+#include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include "ping_func.h"
 
@@ -53,7 +53,6 @@ int main(int argc, char* argv[]) {
 
     if (pid == 0)
     {
-        printf("[PING] Starting watchdog...\n");
         execvp(args[0], args);
 
         fprintf(stderr, "[PING] Error starting watchdog\n");
@@ -62,14 +61,13 @@ int main(int argc, char* argv[]) {
 
     else
     {
-        wdsocketfd = setupTCPSocket(&watchdogAddress);
-
-        sleep(1);
+        usleep(WATCHDOG_WAITTIME);
 
         if (waitpid(pid, &status, WNOHANG) != 0){
-            fprintf(stderr, "[PING] Watchdog error\n");
             exit(1);
         }
+
+        wdsocketfd = setupTCPSocket(&watchdogAddress);
 
         if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == -1)
         {
@@ -77,7 +75,7 @@ int main(int argc, char* argv[]) {
             exit(1);
         }
 
-        usleep(50);
+        usleep(WATCHDOG_WAITTIME);
 
         memset(&dest_in, 0, sizeof(dest_in));
         dest_in.sin_family = AF_INET;
@@ -106,7 +104,7 @@ int main(int argc, char* argv[]) {
 
             sendDataTCP(wdsocketfd, &OKSignal, sizeof(char));
 
-            pingPongTime = ((end.tv_sec - start.tv_sec) * 1000) + (((double)end.tv_usec - start.tv_usec) / 1000);
+            pingPongTime = ((end.tv_sec - start.tv_sec) * PING_MS) + (((double)end.tv_usec - start.tv_usec) / PING_MS);
 
             iphdr_res = (struct iphdr *)response;
             icmphdr_res = (struct icmphdr *)(response + iphdr_res->ihl*4);
@@ -120,7 +118,7 @@ int main(int argc, char* argv[]) {
             iphdr_res->ttl, 
             pingPongTime);
 
-            sleep(1);
+            usleep(PING_WAIT_TIME);
         }
 
         close(socketfd);
@@ -156,7 +154,7 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
 }
 
 ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
-    ssize_t sentd = send(socketfd, buffer, len, 0);
+    ssize_t sentd = send(socketfd, buffer, len, MSG_DONTWAIT);
 
     if (sentd == -1)
     {
@@ -165,18 +163,6 @@ ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
     }
 
     return sentd;
-}
-
-ssize_t receiveDataTCP(int socketfd, void *buffer, int len) {
-    ssize_t recvb = recv(socketfd, buffer, len, 0);
-
-    if (recvb == -1)
-    {
-        perror("recv");
-        exit(1);
-    }
-
-    return recvb;
 }
 
 void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t* addr_len) {
@@ -254,7 +240,7 @@ ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct
 
         fd.fd = socketfd;
         fd.events = POLLIN;
-        res = poll(&fd, 1, 1000); // 1000 ms timeout
+        res = poll(&fd, 1, PING_CLK);
 
         if (res == 0)
         {
