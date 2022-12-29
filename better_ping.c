@@ -71,14 +71,14 @@ int main(int argc, char* argv[]) {
         usleep(WATCHDOG_WAITTIME);
 
         if (waitpid(pid, &status, WNOHANG) != 0){
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == -1)
         {
             kill(pid, SIGKILL);
             perror("connect");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         memset(&dest_in, 0, sizeof(dest_in));
@@ -130,7 +130,7 @@ int main(int argc, char* argv[]) {
 
 void sighandler(int signum) {
     printf("Server %s cannot be reached.\n", destaddress);
-    exit(0);
+    exit(EXIT_SUCCESS);
 }
 
 int setupTCPSocket(struct sockaddr_in *socketAddress) {
@@ -144,13 +144,13 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
     if (inet_pton(AF_INET, (const char*) WATCHDOG_IP, &socketAddress->sin_addr) == -1)
     {
         perror("inet_pton");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
     {
         perror("socket");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     return socketfd;
@@ -163,7 +163,7 @@ ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
     {
         kill(pid, SIGKILL);
         perror("send");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     return sentd;
@@ -173,7 +173,7 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
     if (argc != 2)
     {
         fprintf(stderr, "Usage: ./ping <ip address>\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     memset(dest_in, 0, sizeof(*dest_in));
@@ -181,7 +181,7 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
     if (inet_pton(AF_INET, argv, &(dest_in->sin_addr)) <= 0)
     {
         fprintf(stderr, "Invalid IP Address\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     dest_in->sin_family = AF_INET;
@@ -196,7 +196,7 @@ int setupRawSocket() {
     {
         perror("socket");
         fprintf(stderr, "To create a raw socket, the process needs to be run by root user.\n");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     return socketfd;
@@ -227,7 +227,7 @@ ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_
     {
         kill(pid, SIGKILL);
         perror("sendto");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     return bytes_sent;
@@ -244,8 +244,9 @@ ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct
 
         if (bytes_received == -1)
         {
+            kill(pid, SIGKILL);
             perror("recvfrom");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         else if (bytes_received > 0)

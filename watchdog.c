@@ -3,24 +3,23 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <sys/poll.h>
 #include <errno.h>
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
 #include "ping_func.h"
 
-int isChild = 0;
-
 int main() {
     struct sockaddr_in wdAddress, pingAddress;
+
+    struct pollfd fd;
 
     socklen_t pingAddressLen;
 
     char SignalOK = '\0';
     
-    int socketfd = INVALID_SOCKET, pingSocket = INVALID_SOCKET;
-
-    int timer = 0, bytes_received = 0;
+    int socketfd = INVALID_SOCKET, pingSocket = INVALID_SOCKET, timer = 0, bytes_received = 0, res;
 
     socketfd = setupTCPSocket(&wdAddress);
 
@@ -28,12 +27,30 @@ int main() {
 
     pingAddressLen = sizeof(pingAddress);
 
-    pingSocket = accept(socketfd, (struct sockaddr *) &pingAddress, &pingAddressLen);
+    fd.fd = socketfd;
+    fd.events = POLLIN;
+    res = poll(&fd, 1, PING_MS);
+
+    if (res == 0)
+    {
+        fprintf(stderr, "Watchdog internal error: please run better_ping.\n");
+		exit(EXIT_FAILURE);
+    }
+
+    else if (res == -1)
+    {
+        perror("poll");
+        exit(EXIT_FAILURE);
+    }
+
+    else
+        pingSocket = accept(socketfd, (struct sockaddr *) &pingAddress, &pingAddressLen);
 
     if (pingSocket == -1)
     {
+        kill(getppid(), SIGKILL);
         perror("accept");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     while (timer < WATCHDOG_TIMEOUT)
@@ -53,18 +70,12 @@ int main() {
         }
     }
     
-    if (timer == WATCHDOG_TIMEOUT)
-    {
-        kill(getppid(), SIGUSR1);
-        close(pingSocket);
-        close(socketfd);
-        exit(0);
-    }
+    kill(getppid(), SIGUSR1);
 
     close(pingSocket);
     close(socketfd);
 
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 int setupTCPSocket(struct sockaddr_in *socketAddress) {
@@ -78,26 +89,30 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
 
     if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
     {
+        kill(getppid(), SIGKILL);
         perror("socket");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     if (setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &canReused, sizeof(canReused)) == -1)
     {
+        kill(getppid(), SIGKILL);
         perror("setsockopt");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     if (bind(socketfd, (struct sockaddr *)socketAddress, sizeof(*socketAddress)) == -1)
     {
+        kill(getppid(), SIGKILL);
         perror("bind");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     if (listen(socketfd, 1) == -1)
     {
+        kill(getppid(), SIGKILL);
         perror("listen");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     return socketfd;
@@ -110,8 +125,9 @@ ssize_t receiveDataTCP(int socketfd, void *buffer, int len) {
     {
         if (errno != EWOULDBLOCK)
         {
+            kill(getppid(), SIGKILL);
             perror("recv");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         else
