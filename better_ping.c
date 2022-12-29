@@ -45,6 +45,7 @@ int main(int argc, char* argv[]) {
     checkArguments(argc, argv[1], &dest_in, &addr_len);
 
     socketfd = setupRawSocket();
+    wdsocketfd = setupTCPSocket(&watchdogAddress);
 
     args[0] = "./watchdog";
     args[1] = NULL;
@@ -67,10 +68,9 @@ int main(int argc, char* argv[]) {
             exit(1);
         }
 
-        wdsocketfd = setupTCPSocket(&watchdogAddress);
-
         if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == -1)
         {
+            kill(pid, SIGKILL);
             perror("connect");
             exit(1);
         }
@@ -158,6 +158,7 @@ ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
 
     if (sentd == -1)
     {
+        kill(pid, SIGKILL);
         perror("send");
         exit(1);
     }
@@ -221,6 +222,7 @@ ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_
 
     if (bytes_sent == -1)
     {
+        kill(pid, SIGKILL);
         perror("sendto");
         exit(1);
     }
@@ -253,6 +255,7 @@ ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct
 
         else if (res == -1)
         {
+            kill(pid, SIGKILL);
             perror("poll");
             exit(1);
         }
