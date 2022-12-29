@@ -25,7 +25,7 @@
 #define WATCHDOG_IP         "127.0.0.1"
 
 /* Watchdog TCP Port */
-#define WATCHDOG_PORT       3007
+#define WATCHDOG_PORT       3000
 
 /* Watchdog timeout in seconds */
 #define WATCHDOG_TIMEOUT    10

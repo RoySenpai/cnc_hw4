@@ -1,20 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
-#include <sys/types.h>
-#include <sys/socket.h>
+#include <errno.h>
 #include <arpa/inet.h>
-#include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <string.h>
-#include <errno.h>
-#include <signal.h>
-#include <unistd.h>
-#include <time.h>
-#include <sys/time.h>
-#include <sys/ioctl.h>
-#include <linux/watchdog.h>
 #include <sys/poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include "ping_func.h"
 
 int main() {
