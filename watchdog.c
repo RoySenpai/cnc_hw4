@@ -14,46 +14,81 @@
 #include <sys/time.h>
 #include <sys/ioctl.h>
 #include <linux/watchdog.h>
-
-#define INVALID_SOCKET -1
-
-#define WATCHDOG_IP "127.0.0.1"
-#define WATCHDOG_PORT 3000
-
-int socketSetup(struct sockaddr_in *serverAddress);
+#include <sys/poll.h>
+#include "ping_func.h"
 
 int main() {
-    struct sockaddr_in serverAddress, clientAddress;
+    struct sockaddr_in wdAddress, pingAddress;
+
+    socklen_t pingAddressLen;
+
+    char SignalOK = '\0';
     
-    int socketfd = INVALID_SOCKET;
+    int socketfd = INVALID_SOCKET, pingSocket = INVALID_SOCKET;
 
-    printf("Watchdog started.\n");
+    int timer = 0, bytes_received = 0;
 
-    socketfd = socketSetup(&serverAddress);
+    printf("[WATCHDOG] Watchdog started.\n");
+
+    socketfd = setupTCPSocket(&wdAddress);
+
+    memset(&pingAddress, 0, sizeof(pingAddress));
+
+    pingAddressLen = sizeof(pingAddress);
+
+    pingSocket = accept(socketfd, (struct sockaddr *) &pingAddress, &pingAddressLen);
+
+    if (pingSocket == -1)
+    {
+        perror("accept");
+        exit(1);
+    }
+
+    printf("[WATCHDOG] Ping connected\n");
+
+    while (timer < WATCHDOG_TIMEOUT)
+    {
+        bytes_received = recv(pingSocket, &SignalOK, sizeof(char), MSG_DONTWAIT);
+
+        if (bytes_received > 0)
+        {
+            timer = 0;
+            continue;
+        }
+
+        if (errno == EWOULDBLOCK)
+        {
+            struct pollfd p = { pingSocket, POLLIN, 0 };
+            int r = poll(&p, 1, 1000);
+
+            if (r == 1)
+                continue;
+
+            if (r == 0)
+                timer++;
+        }
+    }
     
-    sleep(2);
+    if (timer == WATCHDOG_TIMEOUT)
+    {
+        fprintf(stderr, "[WATCHDOG] Timeout\n");
+        exit(1);
+    }
 
+    close(pingSocket);
     close(socketfd);
 
     return 0;
-    /*printf("hello partb");
-    while (timer < 10seconds)
-    {
-        recv();
-        timer = 0seconds;
-    }
-    send("timeout")
-
-    return 0;*/
 }
 
-int socketSetup(struct sockaddr_in *serverAddress) {
+int setupTCPSocket(struct sockaddr_in *socketAddress) {
     int socketfd = INVALID_SOCKET, canReused = 1;
 
-    memset(serverAddress, 0, sizeof(*serverAddress));
-    serverAddress->sin_family = AF_INET;
-    serverAddress->sin_addr.s_addr = INADDR_ANY;
-    serverAddress->sin_port = htons(WATCHDOG_PORT);
+    memset(socketAddress, 0, sizeof(*socketAddress));
+
+    socketAddress->sin_family = AF_INET;
+    socketAddress->sin_addr.s_addr = INADDR_ANY;
+    socketAddress->sin_port = htons(WATCHDOG_PORT);
 
     if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
     {
@@ -67,7 +102,7 @@ int socketSetup(struct sockaddr_in *serverAddress) {
         exit(1);
     }
 
-    if (bind(socketfd, (struct sockaddr *)serverAddress, sizeof(*serverAddress)) == -1)
+    if (bind(socketfd, (struct sockaddr *)socketAddress, sizeof(*socketAddress)) == -1)
     {
         perror("bind");
         exit(1);
@@ -79,7 +114,31 @@ int socketSetup(struct sockaddr_in *serverAddress) {
         exit(1);
     }
 
-    printf("Socket successfully created.\n");
+    printf("[WATCHDOG] Socket successfully created.\n");
 
     return socketfd;
+}
+
+ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
+    ssize_t sentd = send(socketfd, buffer, len, 0);
+
+    if (sentd == -1)
+    {
+        perror("send");
+        exit(1);
+    }
+
+    return sentd;
+}
+
+ssize_t receiveDataTCP(int socketfd, void *buffer, int len) {
+    ssize_t recvb = recv(socketfd, buffer, len, 0);
+
+    if (recvb == -1)
+    {
+        perror("recv");
+        exit(1);
+    }
+
+    return recvb;
 }

@@ -7,67 +7,78 @@
 #include <netinet/ip_icmp.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/poll.h>
 #include <unistd.h>
+#include "ping_func.h"
 
-#define INVALID_SOCKET -1
-#define IP4_HDRLEN 20
-#define ICMP_HDRLEN 8
+int status, pid;
 
-#define WATCHDOG_IP "127.0.0.1"
-#define WATCHDOG_PORT 3000
-
-unsigned short calculate_checksum(unsigned short *paddress, int len);
-void preparePing(char *packet, struct icmp *icmphdr, char *data, int datalen);
-int setupPing(struct icmp *icmphdr);
-int sendPing(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len);
-ssize_t receivePing(int socketfd, char* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len);
-int watchdogSocketSetup(struct sockaddr_in *serverAddress);
-
-// run 2 programs using fork + exec
-// command: make clean && make all && ./partb
 int main(int argc, char* argv[]) {
     struct icmp icmphdr;
     struct iphdr *iphdr_res;
     struct icmphdr *icmphdr_res;
+    struct sockaddr_in watchdogAddress;
     struct sockaddr_in dest_in;
-    struct sockaddr_in watchdogSockAddr;
     struct timeval start, end;
 
     socklen_t addr_len;
     ssize_t bytes_received = 0;
 
     char packet[IP_MAXPACKET], response[IP_MAXPACKET];
-    char data[IP_MAXPACKET] = "Hello, this is a ping checkup, please response.\n";
+    char data[ICMP_ECHO_MSG_LEN];
     char responseAddr[INET_ADDRSTRLEN];
+    char *args[2];
+    char OKSignal = '1';
 
-    int datalen = (strlen(data) + 1), socketfd = INVALID_SOCKET;
-    int watchdogFD = INVALID_SOCKET;
+    int socketfd = INVALID_SOCKET, wdsocketfd = INVALID_SOCKET, datalen;
 
     double pingPongTime = 0.0;
 
-    if (argc != 2)
-    {
-        fprintf(stderr, "Usage: ./ping <ip address>\n");
-        exit(1);
-    }
+    for (int i = 0; i < ICMP_ECHO_MSG_LEN - 1; ++i)
+        data[i] = '1';
 
-    char *args[2];
-    // compiled watchdog.c by makefile
+    data[ICMP_ECHO_MSG_LEN - 1] = '\0';
+    datalen = (strlen(data) + 1);
+
+    checkArguments(argc, argv[1], &dest_in, &addr_len);
+
+    socketfd = setupRawSocket();
+
     args[0] = "./watchdog";
     args[1] = NULL;
-    int status;
-    int pid = fork();
+
+    pid = fork();
+
     if (pid == 0)
     {
-        printf("in child \n");
+        printf("[PING] Starting watchdog...\n");
         execvp(args[0], args);
+
+        fprintf(stderr, "[PING] Error starting watchdog\n");
+        exit(errno);
+    }
+
+    else
+    {
+        wdsocketfd = setupTCPSocket(&watchdogAddress);
 
         sleep(1);
 
-        watchdogFD = watchdogSocketSetup(&watchdogSockAddr);
-        socketfd = setupPing(&icmphdr);
+        if (waitpid(pid, &status, WNOHANG) != 0){
+            fprintf(stderr, "[PING] Watchdog error\n");
+            exit(1);
+        }
+
+        if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == -1)
+        {
+            perror("connect");
+            exit(1);
+        }
+
+        usleep(50);
 
         memset(&dest_in, 0, sizeof(dest_in));
         dest_in.sin_family = AF_INET;
@@ -79,16 +90,22 @@ int main(int argc, char* argv[]) {
 
         while(1)
         {
-            bzero(response, IP_MAXPACKET);
-
             preparePing(packet, &icmphdr, data, datalen);
 
             gettimeofday(&start, NULL);
-            sendPing(socketfd, packet, datalen, &dest_in, sizeof(dest_in));
+            sendICMPpacket(socketfd, packet, datalen, &dest_in, sizeof(dest_in));
 
-            bytes_received = receivePing(socketfd, response, sizeof(response), &dest_in, &addr_len);
+            bytes_received = receiveICMPpacket(socketfd, response, sizeof(response), &dest_in, &addr_len);
 
             gettimeofday(&end, NULL);
+
+            if (!bytes_received)
+            {
+                printf("Server %s cannot be reached.\n", argv[1]);
+                exit(0);
+            }
+
+            sendDataTCP(wdsocketfd, &OKSignal, sizeof(char));
 
             pingPongTime = ((end.tv_sec - start.tv_sec) * 1000) + (((double)end.tv_usec - start.tv_usec) / 1000);
 
@@ -97,7 +114,7 @@ int main(int argc, char* argv[]) {
 
             inet_ntop(AF_INET, &(iphdr_res->saddr), responseAddr, INET_ADDRSTRLEN);
 
-            printf("%ld bytes from %s: icmp_seq = %d ttl = %d time = %0.3lf ms\n", 
+            printf("%ld bytes from %s: icmp_seq=%d ttl=%d time=%0.3lf ms\n", 
             bytes_received, 
             responseAddr, 
             icmphdr_res->un.echo.sequence, 
@@ -109,18 +126,29 @@ int main(int argc, char* argv[]) {
 
         close(socketfd);
     }
+
     wait(&status); // waiting for child to finish before exiting
     printf("child exit status is: %d\n", status);
 
     return 0;
 }
 
-int setupPing(struct icmp *icmphdr) {
+int setupTCPSocket(struct sockaddr_in *socketAddress) {
     int socketfd = INVALID_SOCKET;
 
-    if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
+    memset(socketAddress, 0, sizeof(*socketAddress));
+
+    socketAddress->sin_family = AF_INET;
+    socketAddress->sin_port = htons(WATCHDOG_PORT);
+
+    if (inet_pton(AF_INET, (const char*) WATCHDOG_IP, &socketAddress->sin_addr) == -1)
     {
-        fprintf(stderr, "To create a raw socket, the process needs to be run by Admin/root user.\n\n");
+        perror("inet_pton");
+        exit(1);
+    }
+
+    if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
+    {
         perror("socket");
         exit(1);
     }
@@ -128,39 +156,71 @@ int setupPing(struct icmp *icmphdr) {
     return socketfd;
 }
 
-int watchdogSocketSetup(struct sockaddr_in *serverAddress) {
+ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
+    ssize_t sentd = send(socketfd, buffer, len, 0);
+
+    if (sentd == -1)
+    {
+        perror("send");
+        exit(1);
+    }
+
+    return sentd;
+}
+
+ssize_t receiveDataTCP(int socketfd, void *buffer, int len) {
+    ssize_t recvb = recv(socketfd, buffer, len, 0);
+
+    if (recvb == -1)
+    {
+        perror("recv");
+        exit(1);
+    }
+
+    return recvb;
+}
+
+void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t* addr_len) {
+    if (argc != 2)
+    {
+        fprintf(stderr, "[PING] Usage: ./ping <ip address>\n");
+        exit(1);
+    }
+
+    memset(dest_in, 0, sizeof(*dest_in));
+
+    if (inet_pton(AF_INET, argv, &(dest_in->sin_addr)) <= 0)
+    {
+        fprintf(stderr, "[PING] Invalid IP Address\n");
+        exit(1);
+    }
+
+    dest_in->sin_family = AF_INET;
+    
+    *addr_len = sizeof(*dest_in);
+}
+
+int setupRawSocket() {
     int socketfd = INVALID_SOCKET;
-    memset(serverAddress, 0, sizeof(*serverAddress));
-    serverAddress->sin_family = AF_INET;
-    serverAddress->sin_port = htons(WATCHDOG_PORT);
 
-    if (inet_pton(AF_INET, (const char*) WATCHDOG_IP, &serverAddress->sin_addr) == -1)
+    if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
     {
-        perror("inet_pton()");
+        fprintf(stderr, "[PING] To create a raw socket, the process needs to be run by root user.\n");
+        perror("socket");
         exit(1);
     }
-
-    if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
-    {
-        perror("socket()");
-        exit(1);
-    }
-
-    printf("Socket successfully created.\n");
-
-    changeCCAlgorithm(socketfd, 0);
 
     return socketfd;
 }
 
-void preparePing(char *packet, struct icmp *icmphdr, char *data, int datalen) {
-    static int seq = 0;
+void preparePing(char *packet, struct icmp *icmphdr, char *data, size_t datalen) {
+    static uint16_t seq = 0;
 
     bzero(packet, IP_MAXPACKET);
 
     icmphdr->icmp_type = ICMP_ECHO;
     icmphdr->icmp_code = 0;
-    icmphdr->icmp_id = 18;
+    icmphdr->icmp_id = ICMP_ECHO_ID;
     icmphdr->icmp_seq = seq++;
     icmphdr->icmp_cksum = 0;
 
@@ -169,11 +229,10 @@ void preparePing(char *packet, struct icmp *icmphdr, char *data, int datalen) {
 
     icmphdr->icmp_cksum = calculate_checksum((unsigned short *)(packet), ICMP_HDRLEN + datalen);
     memcpy((packet), icmphdr, ICMP_HDRLEN);
-    memcpy(packet + ICMP_HDRLEN, data, datalen);
 }
 
-int sendPing(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len) {
-    int bytes_sent = sendto(socketfd, packet, ICMP_HDRLEN + datalen, 0, (struct sockaddr *)dest_in, len);
+ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len) {
+    ssize_t bytes_sent = sendto(socketfd, packet, ICMP_HDRLEN + datalen, 0, (struct sockaddr *)dest_in, len);
 
     if (bytes_sent == -1)
     {
@@ -184,12 +243,48 @@ int sendPing(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_i
     return bytes_sent;
 }
 
-ssize_t receivePing(int socketfd, char* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len) {
+ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len) {
     ssize_t bytes_received = 0;
-    while ((bytes_received = recvfrom(socketfd, response, response_len, 0, (struct sockaddr *)dest_in, len)))
+
+    bzero(response, IP_MAXPACKET);
+
+    while (!bytes_received)
     {
-        if (bytes_received > 0)
-            break;
+        struct pollfd fd;
+        int res;
+
+        fd.fd = socketfd;
+        fd.events = POLLIN;
+        res = poll(&fd, 1, 1000); // 1000 ms timeout
+
+        if (res == 0)
+        {
+            if (waitpid(pid, &status, WNOHANG) != 0){
+                return 0;
+            }
+
+            continue;
+        }
+
+        else if (res == -1)
+        {
+            perror("poll");
+            exit(1);
+        }
+
+        else
+        {
+            bytes_received = recvfrom(socketfd, response, response_len, 0, (struct sockaddr *)dest_in, len);
+
+            if (bytes_received == -1)
+            {
+                perror("recvfrom");
+                exit(1);
+            }
+
+            else if (bytes_received > 0)
+                break;
+        }
     }
 
     return bytes_received;

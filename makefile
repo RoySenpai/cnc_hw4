@@ -14,7 +14,7 @@ better_ping: better_ping.o
 watchdog: watchdog.o
 	$(CC) $(CFLAGS) $< -o $@
 
-%.o: %.c
+%.o: %.c ping_func.h
 	$(CC) $(CFLAGS) -c $<
 
 clean:
