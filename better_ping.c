@@ -7,14 +7,18 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <sys/time.h>
+#include <fcntl.h>
+#include <time.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
 #include "ping_func.h"
 
-int status, pid;
-
 char destaddress[IP4_MAXLEN];
+
+char SignalTerminate = '0';
+
+int wdsocketfd = INVALID_SOCKET, pid;
 
 int main(int argc, char* argv[]) {
     // Varibles setup
@@ -27,18 +31,15 @@ int main(int argc, char* argv[]) {
     socklen_t addr_len;
     ssize_t bytes_received = 0;
     size_t datalen;
+    clock_t timeofAccept;
 
-    int socketfd = INVALID_SOCKET, wdsocketfd = INVALID_SOCKET;
+    int socketfd = INVALID_SOCKET, status;
 
     double pingPongTime = 0.0;
 
     char *args[2];
     char packet[IP_MAXPACKET], response[IP_MAXPACKET], data[ICMP_ECHO_MSG_LEN], responseAddr[INET_ADDRSTRLEN];
     char OKSignal = '1';
-
-    // Signal SIGUSR1 register to handler
-    signal(SIGUSR1, sighandler);
-    signal(SIGTERM, sighandler);
 
     // Prepare the data we're going to send.
     for (int i = 0; i < ICMP_ECHO_MSG_LEN - 1; ++i)
@@ -80,19 +81,33 @@ int main(int argc, char* argv[]) {
     else
     {
         // Wait some time until the watchdog will prepare it's own TCP socket.
-        usleep(WATCHDOG_WAITTIME);
+        //usleep(WATCHDOG_WAITTIME);
 
         // Check if watchdog is still running
         if (waitpid(pid, &status, WNOHANG) != 0){
             exit(EXIT_FAILURE);
         }
 
+        timeofAccept = clock();
+
         // Try to connect to the watchdog's socket.
-        if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == -1)
+        while(connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == INVALID_SOCKET)
         {
-            kill(pid, SIGKILL);
-            perror("connect");
-            exit(EXIT_FAILURE);
+            if (errno == ECONNREFUSED)
+            {
+                if (clock() - timeofAccept > (CLOCKS_PER_SEC / 5))
+                {
+                    if (waitpid(pid, &status, WNOHANG) != 0){
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            }
+
+            else
+            {
+                perror("connect");
+                exit(EXIT_FAILURE);
+            }
         }
 
         printf("PING %s: %ld data bytes\n", argv[1], datalen);
@@ -118,7 +133,7 @@ int main(int argc, char* argv[]) {
             sendTCPpacket(wdsocketfd, &OKSignal, sizeof(char));
 
             // Calculate the time it took to send and receive the packet
-            pingPongTime = ((end.tv_sec - start.tv_sec) * PING_MS) + (((double)end.tv_usec - start.tv_usec) / PING_MS);
+            pingPongTime = ((end.tv_sec - start.tv_sec) * 1000) + (((double)end.tv_usec - start.tv_usec) / 1000);
 
             // Extract the ICMP ECHO Replay headers via the IP header
             iphdr_res = (struct iphdr *)response;
@@ -137,72 +152,15 @@ int main(int argc, char* argv[]) {
             // Make the ping program sleep some time before sending another ICMP ECHO packet.
             usleep(PING_WAIT_TIME);
         }
-
-        close(socketfd);
     }
+
+    close(wdsocketfd);
+    close(socketfd);
 
     wait(&status); // waiting for child to finish before exiting
     printf("child exit status is: %d\n", status);
 
     return 0;
-}
-
-void sighandler(int signum) {
-    switch (signum)
-    {
-        case SIGTERM:
-        {
-            printf("Watchdog terminated process.\n");
-            exit(EXIT_FAILURE);
-            break;
-        }
-
-        case SIGUSR1:
-        {
-            printf("Server %s cannot be reached.\n", destaddress);
-            exit(EXIT_SUCCESS);
-            break;
-        }
-    
-        default:
-            break;
-    }
-}
-
-int setupTCPSocket(struct sockaddr_in *socketAddress) {
-    int socketfd = INVALID_SOCKET;
-
-    memset(socketAddress, 0, sizeof(*socketAddress));
-
-    socketAddress->sin_family = AF_INET;
-    socketAddress->sin_port = htons(WATCHDOG_PORT);
-
-    if (inet_pton(AF_INET, (const char*) WATCHDOG_IP, &socketAddress->sin_addr) == -1)
-    {
-        perror("inet_pton");
-        exit(EXIT_FAILURE);
-    }
-
-    if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
-    {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
-
-    return socketfd;
-}
-
-ssize_t sendTCPpacket(int socketfd, void* buffer, int len) {
-    ssize_t sentd = send(socketfd, buffer, len, MSG_DONTWAIT);
-
-    if (sentd == -1)
-    {
-        kill(pid, SIGKILL);
-        perror("send");
-        exit(EXIT_FAILURE);
-    }
-
-    return sentd;
 }
 
 void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t* addr_len) {
@@ -217,12 +175,35 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
     if (inet_pton(AF_INET, argv, &(dest_in->sin_addr)) <= 0)
     {
         fprintf(stderr, "Invalid IP Address\n");
-        exit(EXIT_FAILURE);
+        exit(errno);
     }
 
     dest_in->sin_family = AF_INET;
     
     *addr_len = sizeof(*dest_in);
+}
+
+int setupTCPSocket(struct sockaddr_in *socketAddress) {
+    int socketfd = INVALID_SOCKET;
+
+    memset(socketAddress, 0, sizeof(*socketAddress));
+
+    socketAddress->sin_family = AF_INET;
+    socketAddress->sin_port = htons(WATCHDOG_PORT);
+
+    if (inet_pton(AF_INET, (const char*) WATCHDOG_IP, &socketAddress->sin_addr) == -1)
+    {
+        perror("inet_pton");
+        exit(errno);
+    }
+
+    if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
+    {
+        perror("socket");
+        exit(errno);
+    }
+
+    return socketfd;
 }
 
 int setupRawSocket(struct icmp *icmphdr, int id) {
@@ -232,14 +213,116 @@ int setupRawSocket(struct icmp *icmphdr, int id) {
     {
         perror("socket");
         fprintf(stderr, "To create a raw socket, the process needs to be run by root user.\n");
-        exit(EXIT_FAILURE);
+        exit(errno);
     }
 
+    // Sets the TCP socket to non-block.
+    setSocketNonBlocking(socketfd);
+
+    // Setup the ICMP header data.
     icmphdr->icmp_type = ICMP_ECHO;
     icmphdr->icmp_code = 0;
     icmphdr->icmp_id = id;
 
     return socketfd;
+}
+
+int setSocketNonBlocking(int socketfd) {
+    int flags;
+
+    // First we need to get the current flags of the socket file descriptor.
+    if ((flags = fcntl(socketfd, F_GETFL, 0)) == -1)
+    {
+        perror("fcntl");
+        exit(errno);
+    }
+
+    // We set the flags include to a Non-Blocking I/O mode.
+    flags |= O_NONBLOCK;
+
+    // We set the new flags of the socket file descriptor.
+    if ((flags = fcntl(socketfd, F_SETFL, flags)) == -1)
+    {
+        perror("fcntl");
+        exit(errno);
+    }
+
+    return 1;
+}
+
+ssize_t sendTCPpacket(int socketfd, void* buffer, int len) {
+    ssize_t sentd = send(socketfd, buffer, len, MSG_DONTWAIT);
+
+    if (sentd == -1)
+    {
+        perror("send");
+        exit(errno);
+    }
+
+    return sentd;
+}
+
+ssize_t receiveTCPpacket(int socketfd, void *buffer, int len) {
+    ssize_t recvb = recv(socketfd, buffer, len, MSG_DONTWAIT);
+
+    if (recvb == -1)
+    {
+        if (errno != EWOULDBLOCK)
+        {
+            perror("recv");
+            exit(errno);
+        }
+    }
+
+    return recvb;
+}
+
+ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len) {
+    ssize_t bytes_sent = sendto(socketfd, packet, ICMP_HDRLEN + datalen, 0, (struct sockaddr *)dest_in, len);
+
+    if (bytes_sent == -1)
+    {
+        perror("sendto");
+        exit(errno);
+    }
+
+    return bytes_sent;
+}
+
+ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len) {
+    ssize_t bytes_received = 0;
+
+    bzero(response, IP_MAXPACKET);
+
+    while (bytes_received <= 0)
+    {
+        bytes_received = recvfrom(socketfd, response, response_len, 0, (struct sockaddr *)dest_in, len);
+
+        if (bytes_received == -1)
+        {
+            if (errno != EAGAIN)
+            {
+                perror("recvfrom");
+                exit(errno);
+            }
+
+            char Signal = '\0';
+
+            receiveTCPpacket(wdsocketfd, &Signal, sizeof(char));
+
+            if (Signal == '0')
+            {
+                printf("Server %s cannot be reached.\n", destaddress);
+                close(wdsocketfd);
+                exit(EXIT_SUCCESS);
+            }
+        }
+
+        else if (bytes_received > 0)
+            break;
+    }
+
+    return bytes_received;
 }
 
 void preparePing(char *packet, struct icmp *icmphdr, char *data, size_t datalen) {
@@ -256,42 +339,6 @@ void preparePing(char *packet, struct icmp *icmphdr, char *data, size_t datalen)
 
     icmphdr->icmp_cksum = calculate_checksum((unsigned short *)packet, ICMP_HDRLEN + datalen);
     memcpy(packet, icmphdr, ICMP_HDRLEN);
-}
-
-ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len) {
-    ssize_t bytes_sent = sendto(socketfd, packet, ICMP_HDRLEN + datalen, 0, (struct sockaddr *)dest_in, len);
-
-    if (bytes_sent == -1)
-    {
-        kill(pid, SIGKILL);
-        perror("sendto");
-        exit(EXIT_FAILURE);
-    }
-
-    return bytes_sent;
-}
-
-ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len) {
-    ssize_t bytes_received = 0;
-
-    bzero(response, IP_MAXPACKET);
-
-    while (!bytes_received)
-    {
-        bytes_received = recvfrom(socketfd, response, response_len, 0, (struct sockaddr *)dest_in, len);
-
-        if (bytes_received == -1)
-        {
-            kill(pid, SIGKILL);
-            perror("recvfrom");
-            exit(EXIT_FAILURE);
-        }
-
-        else if (bytes_received > 0)
-            break;
-    }
-
-    return bytes_received;
 }
 
 unsigned short calculate_checksum(unsigned short *paddress, int len) {

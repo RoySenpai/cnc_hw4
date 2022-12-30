@@ -59,11 +59,11 @@ int main(int argc, char* argv[]) {
         // Wait and receive the ICMP ECHO REPLAY packet.
         bytes_received = receiveICMPpacket(socketfd, response, sizeof(response), &dest_in, &addr_len);
 
-            // Calculate ending time.
+        // Calculate ending time.
         gettimeofday(&end, NULL);
 
         // Calculate the time it took to send and receive the packet
-        pingPongTime = ((end.tv_sec - start.tv_sec) * PING_MS) + (((double)end.tv_usec - start.tv_usec) / PING_MS);
+        pingPongTime = ((end.tv_sec - start.tv_sec) * 1000) + (((double)end.tv_usec - start.tv_usec) / 1000);
 
         // Extract the ICMP ECHO Replay headers via the IP header
         iphdr_res = (struct iphdr *)response;

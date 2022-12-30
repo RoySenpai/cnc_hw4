@@ -18,9 +18,6 @@
 /* ICMP ECHO Message length */
 #define ICMP_ECHO_MSG_LEN   32
 
-/* A constant to convert 1 ms to 1000 microseconds. */
-#define PING_MS             1000
-
 /* Watchdog IP Address */
 #define WATCHDOG_IP         "127.0.0.1"
 
@@ -30,22 +27,8 @@
 /* Watchdog timeout in seconds. */
 #define WATCHDOG_TIMEOUT    10
 
-/* Wait time for the watchdog program to initialize. */
-#define WATCHDOG_WAITTIME   (100 * PING_MS)
-
 /* Defines the wait time in ms after receiving an ICMP ECHO REPLAY packet. */
-#define PING_WAIT_TIME      (1000 * PING_MS)
-
-/*
- * Function:  sighandler
- * --------------------
- * A function made solely to handle an incoming signal.
- *  Used only with signal function.
- *
- *  signum: signal id, see SIG*.
- * 
- */
-void sighandler(int signum);
+#define PING_WAIT_TIME      (1000 * 1000)
 
 /*
  * Function:  checkArguments
@@ -70,7 +53,7 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
  *                  needed to setup a TCP socket.
  *
  *  returns: socket file descriptor if successed,
- *           exit error 1 on fail.
+ *           exit error errno on fail.
  */
 int setupTCPSocket(struct sockaddr_in *socketAddress);
 
@@ -83,13 +66,25 @@ int setupTCPSocket(struct sockaddr_in *socketAddress);
  *  icmphdr: a pointer to an ICMP header that will be written to
  *              to prepare the packet.
  * 
- *  icmphdr: ID that will be used to identify ICMP ECHO and
+ *  id: ID that will be used to identify ICMP ECHO and
  *              ICMP ECHO REPLAY packets.
  *
  *  returns: socket file descriptor if successed,
- *           exit error 1 on fail.
+ *           exit error errno on fail.
  */
 int setupRawSocket(struct icmp *icmphdr, int id);
+
+/*
+ * Function:  setSocketNonBlocking
+ * --------------------
+ * Set the given socket to use Non-Blocking I/O mode.
+ * 
+ *  socketfd: socket file descriptor.
+ *
+ *  returns: 1 if successed,
+ *           exit error errno on fail.
+ */
+int setSocketNonBlocking(int socketfd);
 
 /*
  * Function:  preparePing
@@ -141,7 +136,7 @@ unsigned short calculate_checksum(unsigned short *paddress, int len);
  *  len: length of the sockaddr_in struct
  *
  *  returns: total bytes sent.
- *           exit error 1 on fail.
+ *           exit error errno on fail.
  */
 ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len);
 
@@ -164,7 +159,7 @@ ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_
  *  len: length of the sockaddr_in struct
  *
  *  returns: total bytes received
- *           exit error 1 on fail.
+ *           exit error errno on fail.
  */
 ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len);
 
@@ -180,7 +175,7 @@ ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct
  *  len: buffer size.
  *
  *  returns: total bytes sent,
- *           exit error 1 on fail.
+ *           exit error errno on fail.
  */
 ssize_t sendTCPpacket(int socketfd, void* buffer, int len);
 
@@ -196,7 +191,7 @@ ssize_t sendTCPpacket(int socketfd, void* buffer, int len);
  *  len: buffer size.
  *
  *  returns: total bytes received,
- *           exit error 1 on fail.
+ *           exit error errno on fail.
  */
 ssize_t receiveTCPpacket(int socketfd, void *buffer, int len);
 
