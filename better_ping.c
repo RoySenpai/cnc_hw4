@@ -17,63 +17,76 @@ int status, pid;
 char destaddress[IP4_MAXLEN];
 
 int main(int argc, char* argv[]) {
+    // Varibles setup
     struct icmp icmphdr;
     struct iphdr *iphdr_res;
     struct icmphdr *icmphdr_res;
-    struct sockaddr_in watchdogAddress;
-    struct sockaddr_in dest_in;
+    struct sockaddr_in watchdogAddress, dest_in;
     struct timeval start, end;
 
     socklen_t addr_len;
     ssize_t bytes_received = 0;
+    size_t datalen;
 
-    char packet[IP_MAXPACKET], response[IP_MAXPACKET];
-    char data[ICMP_ECHO_MSG_LEN];
-    char responseAddr[INET_ADDRSTRLEN];
-    char *args[2];
-    char OKSignal = '1';
-
-    int socketfd = INVALID_SOCKET, wdsocketfd = INVALID_SOCKET, datalen;
+    int socketfd = INVALID_SOCKET, wdsocketfd = INVALID_SOCKET;
 
     double pingPongTime = 0.0;
 
+    char *args[2];
+    char packet[IP_MAXPACKET], response[IP_MAXPACKET], data[ICMP_ECHO_MSG_LEN], responseAddr[INET_ADDRSTRLEN];
+    char OKSignal = '1';
+
+    // Signal SIGUSR1 register to handler
     signal(SIGUSR1, sighandler);
 
+    // Prepare the data we're going to send.
     for (int i = 0; i < ICMP_ECHO_MSG_LEN - 1; ++i)
         data[i] = '1';
 
     data[ICMP_ECHO_MSG_LEN - 1] = '\0';
     datalen = (strlen(data) + 1);
 
+    // Check the arguments passed to the program and check IP validity.
     checkArguments(argc, argv[1], &dest_in, &addr_len);
 
     strcpy(destaddress, argv[1]);
 
-    socketfd = setupRawSocket();
+    // Prepare the RAW socket.
+    socketfd = setupRawSocket(&icmphdr);
+
+    // Prepare the TCP socket with the watchdog program (default port 3000).
     wdsocketfd = setupTCPSocket(&watchdogAddress);
 
+    // Passing the arguments needed to start the watchdog program and fork the process.
     args[0] = "./watchdog";
     args[1] = NULL;
 
     pid = fork();
 
+    // In child process (watchdog).
     if (pid == 0)
     {
+        // Executing the watchdog program.
         execvp(args[0], args);
 
+        // Incase of an error (shouldn't be any in normal operation).
         fprintf(stderr, "Error starting watchdog\n");
         perror("execvp");
         exit(errno);
     }
 
+    // In parent process (better_ping).
     else
     {
-        usleep(WATCHDOG_WAITTIME);
-
+        // Check if watchdog is still running
         if (waitpid(pid, &status, WNOHANG) != 0){
             exit(EXIT_FAILURE);
         }
 
+        // Wait some time until the watchdog will prepare it's own TCP socket.
+        usleep(WATCHDOG_WAITTIME);
+
+        // Try to connect to the watchdog's socket.
         if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == -1)
         {
             kill(pid, SIGKILL);
@@ -81,41 +94,46 @@ int main(int argc, char* argv[]) {
             exit(EXIT_FAILURE);
         }
 
-        memset(&dest_in, 0, sizeof(dest_in));
-        dest_in.sin_family = AF_INET;
-        dest_in.sin_addr.s_addr = inet_addr(argv[1]);
-
-        addr_len = sizeof(dest_in);
-
-        printf("PING %s: %d data bytes\n", argv[1], datalen);
+        printf("PING %s: %ld data bytes\n", argv[1], datalen);
 
         while(1)
         {
+            // Prepare the ICMP ECHO packet.
             preparePing(packet, &icmphdr, data, datalen);
 
+            // Calculate starting time.
             gettimeofday(&start, NULL);
+
+            // Send the ICMP ECHO packet to the destination address.
             sendICMPpacket(socketfd, packet, datalen, &dest_in, sizeof(dest_in));
 
+            // Wait and receive the ICMP ECHO REPLAY packet.
             bytes_received = receiveICMPpacket(socketfd, response, sizeof(response), &dest_in, &addr_len);
 
+            // Calculate ending time.
             gettimeofday(&end, NULL);
 
-            sendDataTCP(wdsocketfd, &OKSignal, sizeof(char));
+            // Send OK signal to watchdog.
+            sendTCPpacket(wdsocketfd, &OKSignal, sizeof(char));
 
+            // Calculate the time it took to send and receive the packet
             pingPongTime = ((end.tv_sec - start.tv_sec) * PING_MS) + (((double)end.tv_usec - start.tv_usec) / PING_MS);
 
+            // Extract the ICMP ECHO Replay headers via the IP header
             iphdr_res = (struct iphdr *)response;
             icmphdr_res = (struct icmphdr *)(response + iphdr_res->ihl*4);
 
             inet_ntop(AF_INET, &(iphdr_res->saddr), responseAddr, INET_ADDRSTRLEN);
 
+            // Print the packet data (total length, source IP address, ICMP ECHO REPLAY sequance number, IP Time-To-Live and the calculated time).
             printf("%ld bytes from %s: icmp_seq=%d ttl=%d time=%0.3lf ms\n", 
             bytes_received, 
             responseAddr, 
-            icmphdr_res->un.echo.sequence, 
+            ntohs(icmphdr_res->un.echo.sequence),
             iphdr_res->ttl, 
             pingPongTime);
 
+            // Make the ping program sleep some time before sending another ICMP ECHO packet.
             usleep(PING_WAIT_TIME);
         }
 
@@ -156,7 +174,7 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
     return socketfd;
 }
 
-ssize_t sendDataTCP(int socketfd, void* buffer, int len) {
+ssize_t sendTCPpacket(int socketfd, void* buffer, int len) {
     ssize_t sentd = send(socketfd, buffer, len, MSG_DONTWAIT);
 
     if (sentd == -1)
@@ -189,7 +207,7 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
     *addr_len = sizeof(*dest_in);
 }
 
-int setupRawSocket() {
+int setupRawSocket(struct icmp *icmphdr) {
     int socketfd = INVALID_SOCKET;
 
     if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
@@ -199,6 +217,10 @@ int setupRawSocket() {
         exit(EXIT_FAILURE);
     }
 
+    icmphdr->icmp_type = ICMP_ECHO;
+    icmphdr->icmp_code = 0;
+    icmphdr->icmp_id = ICMP_ECHO_ID;
+
     return socketfd;
 }
 
@@ -207,17 +229,15 @@ void preparePing(char *packet, struct icmp *icmphdr, char *data, size_t datalen)
 
     bzero(packet, IP_MAXPACKET);
 
-    icmphdr->icmp_type = ICMP_ECHO;
-    icmphdr->icmp_code = 0;
-    icmphdr->icmp_id = ICMP_ECHO_ID;
-    icmphdr->icmp_seq = seq++;
+    // Prepares the ICMP packet data
+    icmphdr->icmp_seq = htons(seq++);
     icmphdr->icmp_cksum = 0;
 
-    memcpy((packet), icmphdr, ICMP_HDRLEN);
+    memcpy(packet, icmphdr, ICMP_HDRLEN);
     memcpy(packet + ICMP_HDRLEN, data, datalen);
 
-    icmphdr->icmp_cksum = calculate_checksum((unsigned short *)(packet), ICMP_HDRLEN + datalen);
-    memcpy((packet), icmphdr, ICMP_HDRLEN);
+    icmphdr->icmp_cksum = calculate_checksum((unsigned short *)packet, ICMP_HDRLEN + datalen);
+    memcpy(packet, icmphdr, ICMP_HDRLEN);
 }
 
 ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_in *dest_in, socklen_t len) {

@@ -13,6 +13,7 @@
 #include "ping_func.h"
 
 int main(int argc, char* argv[]) {
+    // Varibles setup
     struct icmp icmphdr;
     struct iphdr *iphdr_res;
     struct icmphdr *icmphdr_res;
@@ -21,72 +22,87 @@ int main(int argc, char* argv[]) {
 
     socklen_t addr_len;
     ssize_t bytes_received = 0;
+    size_t datalen;
 
-    char packet[IP_MAXPACKET], response[IP_MAXPACKET];
-    char data[ICMP_ECHO_MSG_LEN];
-    char responseAddr[INET_ADDRSTRLEN];
-
-    int socketfd = INVALID_SOCKET, datalen;
+    int socketfd = INVALID_SOCKET;
 
     double pingPongTime = 0.0;
 
+    char packet[IP_MAXPACKET], response[IP_MAXPACKET], data[ICMP_ECHO_MSG_LEN], responseAddr[INET_ADDRSTRLEN];
+
+    // Prepare the data we're going to send.
     for (int i = 0; i < ICMP_ECHO_MSG_LEN - 1; ++i)
         data[i] = '1';
 
     data[ICMP_ECHO_MSG_LEN - 1] = '\0';
     datalen = (strlen(data) + 1);
 
+    // Check the arguments passed to the program and check IP validity.
     checkArguments(argc, argv[1], &dest_in, &addr_len);
 
-    socketfd = setupRawSocket();
+    // Prepare the RAW socket.
+    socketfd = setupRawSocket(&icmphdr);
 
-    printf("PING %s: %d data bytes\n", argv[1], datalen);
+    printf("PING %s: %ld data bytes\n", argv[1], datalen);
 
     while(1)
     {
+        // Prepare the ICMP ECHO packet.
         preparePing(packet, &icmphdr, data, datalen);
 
+        // Calculate starting time.
         gettimeofday(&start, NULL);
+
+        // Send the ICMP ECHO packet to the destination address.
         sendICMPpacket(socketfd, packet, datalen, &dest_in, sizeof(dest_in));
 
+        // Wait and receive the ICMP ECHO REPLAY packet.
         bytes_received = receiveICMPpacket(socketfd, response, sizeof(response), &dest_in, &addr_len);
 
+            // Calculate ending time.
         gettimeofday(&end, NULL);
 
-        pingPongTime = ((end.tv_sec - start.tv_sec) * 1000) + (((double)end.tv_usec - start.tv_usec) / 1000);
+        // Calculate the time it took to send and receive the packet
+        pingPongTime = ((end.tv_sec - start.tv_sec) * PING_MS) + (((double)end.tv_usec - start.tv_usec) / PING_MS);
 
+        // Extract the ICMP ECHO Replay headers via the IP header
         iphdr_res = (struct iphdr *)response;
         icmphdr_res = (struct icmphdr *)(response + iphdr_res->ihl*4);
 
         inet_ntop(AF_INET, &(iphdr_res->saddr), responseAddr, INET_ADDRSTRLEN);
 
+        // Print the packet data (total length, source IP address, ICMP ECHO REPLAY sequance number, IP Time-To-Live and the calculated time).
         printf("%ld bytes from %s: icmp_seq=%d ttl=%d time=%0.3lf ms\n", 
         bytes_received, 
         responseAddr, 
-        icmphdr_res->un.echo.sequence, 
+        ntohs(icmphdr_res->un.echo.sequence),
         iphdr_res->ttl, 
         pingPongTime);
 
+        // Make the ping program sleep some time before sending another ICMP ECHO packet.
         usleep(PING_WAIT_TIME);
     }
 
+    // Closing the RAW socket and finish.
     close(socketfd);
 
     return 0;
 }
 
 void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t* addr_len) {
+    // We must have 2 arguments passed
     if (argc != 2)
     {
-        fprintf(stderr, "[PING] Usage: ./ping <ip address>\n");
+        fprintf(stderr, "Usage: ./ping <ip address>\n");
         exit(1);
     }
 
     memset(dest_in, 0, sizeof(*dest_in));
 
+    // Try to convert the second agument to a binary IPv4 address
     if (inet_pton(AF_INET, argv, &(dest_in->sin_addr)) <= 0)
     {
-        fprintf(stderr, "[PING] Invalid IP Address\n");
+        fprintf(stderr, "Invalid IP Address\n");
         exit(1);
     }
 
@@ -95,15 +111,19 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
     *addr_len = sizeof(*dest_in);
 }
 
-int setupRawSocket() {
+int setupRawSocket(struct icmp *icmphdr) {
     int socketfd = INVALID_SOCKET;
 
     if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
     {
-        fprintf(stderr, "[PING] To create a raw socket, the process needs to be run by root user.\n");
+        fprintf(stderr, "To create a raw socket, the process needs to be run by root user.\n");
         perror("socket");
         exit(1);
     }
+
+    icmphdr->icmp_type = ICMP_ECHO;
+    icmphdr->icmp_code = 0;
+    icmphdr->icmp_id = ICMP_ECHO_ID;
 
     return socketfd;
 }
@@ -113,10 +133,8 @@ void preparePing(char *packet, struct icmp *icmphdr, char *data, size_t datalen)
 
     bzero(packet, IP_MAXPACKET);
 
-    icmphdr->icmp_type = ICMP_ECHO;
-    icmphdr->icmp_code = 0;
-    icmphdr->icmp_id = ICMP_ECHO_ID;
-    icmphdr->icmp_seq = seq++;
+    // Prepares the ICMP packet data
+    icmphdr->icmp_seq = htons(seq++);
     icmphdr->icmp_cksum = 0;
 
     memcpy((packet), icmphdr, ICMP_HDRLEN);

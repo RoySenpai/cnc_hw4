@@ -35,6 +35,7 @@ make all
 ```
 
 ## Running
+* **NOTE:** Please notice that watchdog should never be run alone, as it depends on better_ping.
 ```
 # Runs a ping program to a given ip address.
 sudo ./ping <ipaddress>

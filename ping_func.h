@@ -82,11 +82,14 @@ int setupTCPSocket(struct sockaddr_in *socketAddress);
  * --------------------
  * Setup a Raw socket, using ICMP IP Protocol.
  *  Used for Ping application.
+ * 
+ *  icmphdr: a pointer to an ICMP header that will be written to
+ *              to prepare the packet.
  *
  *  returns: socket file descriptor if successed,
  *           exit error 1 on fail.
  */
-int setupRawSocket();
+int setupRawSocket(struct icmp *icmphdr);
 
 /*
  * Function:  preparePing
@@ -166,7 +169,7 @@ ssize_t sendICMPpacket(int socketfd, char* packet, int datalen, struct sockaddr_
 ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct sockaddr_in *dest_in, socklen_t *len);
 
 /*
- * Function:  sendDataTCP
+ * Function:  sendTCPpacket
  * --------------------
  * Sends data via TCP socket.
  *
@@ -179,7 +182,7 @@ ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct
  *  returns: total bytes sent,
  *           exit error 1 on fail.
  */
-ssize_t sendDataTCP(int socketfd, void* buffer, int len);
+ssize_t sendTCPpacket(int socketfd, void* buffer, int len);
 
 /*
  * Function:  receiveDataTCP
@@ -195,6 +198,6 @@ ssize_t sendDataTCP(int socketfd, void* buffer, int len);
  *  returns: total bytes received,
  *           exit error 1 on fail.
  */
-ssize_t receiveDataTCP(int socketfd, void *buffer, int len);
+ssize_t receiveTCPpacket(int socketfd, void *buffer, int len);
 
 #endif

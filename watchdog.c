@@ -55,7 +55,7 @@ int main() {
 
     while (timer < WATCHDOG_TIMEOUT)
     {
-        bytes_received = receiveDataTCP(pingSocket, &SignalOK, sizeof(char));
+        bytes_received = receiveTCPpacket(pingSocket, &SignalOK, sizeof(char));
 
         if (bytes_received > 0)
         {
@@ -118,7 +118,7 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
     return socketfd;
 }
 
-ssize_t receiveDataTCP(int socketfd, void *buffer, int len) {
+ssize_t receiveTCPpacket(int socketfd, void *buffer, int len) {
     ssize_t recvb = recv(socketfd, buffer, len, MSG_DONTWAIT);
 
     if (recvb == -1)
