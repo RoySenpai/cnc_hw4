@@ -1,3 +1,22 @@
+/*
+ *  Communication and Computing Course Assigment 4:
+ *  RAW Sockets and ICMP Protocol
+ *  Copyright (C) 2022-2023  Roy Simanovich and Yuval Yurzdichinsky
+ *  
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
@@ -80,10 +99,7 @@ int main(int argc, char* argv[]) {
     // In parent process (better_ping).
     else
     {
-        // Wait some time until the watchdog will prepare it's own TCP socket.
-        //usleep(WATCHDOG_WAITTIME);
-
-        // Check if watchdog is still running
+        // Check if watchdog is still running.
         if (waitpid(pid, &status, WNOHANG) != 0){
             exit(EXIT_FAILURE);
         }
@@ -97,6 +113,7 @@ int main(int argc, char* argv[]) {
             {
                 if (clock() - timeofAccept > (CLOCKS_PER_SEC / 5))
                 {
+                    // Recheck if watchdog still running.
                     if (waitpid(pid, &status, WNOHANG) != 0){
                         exit(EXIT_FAILURE);
                     }
@@ -296,16 +313,19 @@ ssize_t receiveICMPpacket(int socketfd, void* response, int response_len, struct
 
     while (bytes_received <= 0)
     {
+        // Trying to receive an ICMP ECHO REPLAY packet.
         bytes_received = recvfrom(socketfd, response, response_len, 0, (struct sockaddr *)dest_in, len);
 
         if (bytes_received == -1)
         {
+            // Filter Non-Blocking I/O.
             if (errno != EAGAIN)
             {
                 perror("recvfrom");
                 exit(errno);
             }
 
+            // Check with watchdog if timeout passed.
             char Signal = '\0';
 
             receiveTCPpacket(wdsocketfd, &Signal, sizeof(char));
