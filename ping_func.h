@@ -15,9 +15,6 @@
 /* ICMP Header length */
 #define ICMP_HDRLEN         8
 
-/* ICMP ECHO Identifier */
-#define ICMP_ECHO_ID        1337
-
 /* ICMP ECHO Message length */
 #define ICMP_ECHO_MSG_LEN   32
 
@@ -85,11 +82,14 @@ int setupTCPSocket(struct sockaddr_in *socketAddress);
  * 
  *  icmphdr: a pointer to an ICMP header that will be written to
  *              to prepare the packet.
+ * 
+ *  icmphdr: ID that will be used to identify ICMP ECHO and
+ *              ICMP ECHO REPLAY packets.
  *
  *  returns: socket file descriptor if successed,
  *           exit error 1 on fail.
  */
-int setupRawSocket(struct icmp *icmphdr);
+int setupRawSocket(struct icmp *icmphdr, int id);
 
 /*
  * Function:  preparePing

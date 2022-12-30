@@ -38,6 +38,7 @@ int main(int argc, char* argv[]) {
 
     // Signal SIGUSR1 register to handler
     signal(SIGUSR1, sighandler);
+    signal(SIGTERM, sighandler);
 
     // Prepare the data we're going to send.
     for (int i = 0; i < ICMP_ECHO_MSG_LEN - 1; ++i)
@@ -52,7 +53,7 @@ int main(int argc, char* argv[]) {
     strcpy(destaddress, argv[1]);
 
     // Prepare the RAW socket.
-    socketfd = setupRawSocket(&icmphdr);
+    socketfd = setupRawSocket(&icmphdr, getpid());
 
     // Prepare the TCP socket with the watchdog program (default port 3000).
     wdsocketfd = setupTCPSocket(&watchdogAddress);
@@ -78,13 +79,13 @@ int main(int argc, char* argv[]) {
     // In parent process (better_ping).
     else
     {
+        // Wait some time until the watchdog will prepare it's own TCP socket.
+        usleep(WATCHDOG_WAITTIME);
+
         // Check if watchdog is still running
         if (waitpid(pid, &status, WNOHANG) != 0){
             exit(EXIT_FAILURE);
         }
-
-        // Wait some time until the watchdog will prepare it's own TCP socket.
-        usleep(WATCHDOG_WAITTIME);
 
         // Try to connect to the watchdog's socket.
         if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == -1)
@@ -147,8 +148,25 @@ int main(int argc, char* argv[]) {
 }
 
 void sighandler(int signum) {
-    printf("Server %s cannot be reached.\n", destaddress);
-    exit(EXIT_SUCCESS);
+    switch (signum)
+    {
+        case SIGTERM:
+        {
+            printf("Watchdog terminated process.\n");
+            exit(EXIT_FAILURE);
+            break;
+        }
+
+        case SIGUSR1:
+        {
+            printf("Server %s cannot be reached.\n", destaddress);
+            exit(EXIT_SUCCESS);
+            break;
+        }
+    
+        default:
+            break;
+    }
 }
 
 int setupTCPSocket(struct sockaddr_in *socketAddress) {
@@ -207,7 +225,7 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
     *addr_len = sizeof(*dest_in);
 }
 
-int setupRawSocket(struct icmp *icmphdr) {
+int setupRawSocket(struct icmp *icmphdr, int id) {
     int socketfd = INVALID_SOCKET;
 
     if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
@@ -219,7 +237,7 @@ int setupRawSocket(struct icmp *icmphdr) {
 
     icmphdr->icmp_type = ICMP_ECHO;
     icmphdr->icmp_code = 0;
-    icmphdr->icmp_id = ICMP_ECHO_ID;
+    icmphdr->icmp_id = id;
 
     return socketfd;
 }
@@ -230,7 +248,7 @@ void preparePing(char *packet, struct icmp *icmphdr, char *data, size_t datalen)
     bzero(packet, IP_MAXPACKET);
 
     // Prepares the ICMP packet data
-    icmphdr->icmp_seq = htons(seq++);
+    icmphdr->icmp_seq = htons(++seq);
     icmphdr->icmp_cksum = 0;
 
     memcpy(packet, icmphdr, ICMP_HDRLEN);

@@ -48,8 +48,8 @@ int main() {
 
     if (pingSocket == -1)
     {
-        kill(getppid(), SIGKILL);
         perror("accept");
+        kill(getppid(), SIGTERM);
         exit(EXIT_FAILURE);
     }
 
@@ -89,29 +89,32 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
 
     if ((socketfd = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
     {
-        kill(getppid(), SIGKILL);
         perror("socket");
+        kill(getppid(), SIGTERM);
         exit(EXIT_FAILURE);
     }
 
     if (setsockopt(socketfd, SOL_SOCKET, SO_REUSEADDR, &canReused, sizeof(canReused)) == -1)
     {
-        kill(getppid(), SIGKILL);
         perror("setsockopt");
+        kill(getppid(), SIGTERM);
         exit(EXIT_FAILURE);
     }
 
     if (bind(socketfd, (struct sockaddr *)socketAddress, sizeof(*socketAddress)) == -1)
     {
-        kill(getppid(), SIGKILL);
+        if (errno == EADDRINUSE)
+            fprintf(stderr, "Watchdog internal error: TCP Port %d is occupied.\nPlease check that you're not running watchdog twice\n", WATCHDOG_PORT);
+
         perror("bind");
+        kill(getppid(), SIGTERM);
         exit(EXIT_FAILURE);
     }
 
     if (listen(socketfd, 1) == -1)
     {
-        kill(getppid(), SIGKILL);
         perror("listen");
+        kill(getppid(), SIGTERM);
         exit(EXIT_FAILURE);
     }
 
@@ -125,8 +128,8 @@ ssize_t receiveTCPpacket(int socketfd, void *buffer, int len) {
     {
         if (errno != EWOULDBLOCK)
         {
-            kill(getppid(), SIGKILL);
             perror("recv");
+            kill(getppid(), SIGTERM);
             exit(EXIT_FAILURE);
         }
 

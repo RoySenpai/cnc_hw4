@@ -41,7 +41,7 @@ int main(int argc, char* argv[]) {
     checkArguments(argc, argv[1], &dest_in, &addr_len);
 
     // Prepare the RAW socket.
-    socketfd = setupRawSocket(&icmphdr);
+    socketfd = setupRawSocket(&icmphdr, getpid());
 
     printf("PING %s: %ld data bytes\n", argv[1], datalen);
 
@@ -111,7 +111,7 @@ void checkArguments(int argc, char* argv, struct sockaddr_in* dest_in, socklen_t
     *addr_len = sizeof(*dest_in);
 }
 
-int setupRawSocket(struct icmp *icmphdr) {
+int setupRawSocket(struct icmp *icmphdr, int id) {
     int socketfd = INVALID_SOCKET;
 
     if ((socketfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) == INVALID_SOCKET)
@@ -123,7 +123,7 @@ int setupRawSocket(struct icmp *icmphdr) {
 
     icmphdr->icmp_type = ICMP_ECHO;
     icmphdr->icmp_code = 0;
-    icmphdr->icmp_id = ICMP_ECHO_ID;
+    icmphdr->icmp_id = id;
 
     return socketfd;
 }
@@ -134,7 +134,7 @@ void preparePing(char *packet, struct icmp *icmphdr, char *data, size_t datalen)
     bzero(packet, IP_MAXPACKET);
 
     // Prepares the ICMP packet data
-    icmphdr->icmp_seq = htons(seq++);
+    icmphdr->icmp_seq = htons(++seq);
     icmphdr->icmp_cksum = 0;
 
     memcpy((packet), icmphdr, ICMP_HDRLEN);
