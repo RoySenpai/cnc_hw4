@@ -233,7 +233,7 @@ int setupRawSocket(struct icmp *icmphdr, int id) {
         exit(errno);
     }
 
-    // Sets the TCP socket to non-block.
+    // Sets the RAW socket to non-block.
     setSocketNonBlocking(socketfd);
 
     // Setup the ICMP header data.

@@ -89,7 +89,6 @@ int main() {
             }
 
             timer = 0;
-            continue;
         }
 
         // We didn't receive a signal from the ping program, send a signal back and go to sleep for 1 second.
@@ -97,8 +96,9 @@ int main() {
         {
             sendTCPpacket(pingSocket, &SignalOK, sizeof(char));
             timer++;
-            sleep(1);
         }
+
+        sleep(1);
     }
 
     SignalOK = '0';
