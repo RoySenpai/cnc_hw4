@@ -46,6 +46,9 @@
 /* Watchdog timeout in seconds. */
 #define WATCHDOG_TIMEOUT    10
 
+/* Wait time for the watchdog program to initialize. */
+#define WATCHDOG_WAITTIME   (100 * 1000)
+
 /* Defines the wait time in ms after receiving an ICMP ECHO REPLAY packet. */
 #define PING_WAIT_TIME      (1000 * 1000)
 

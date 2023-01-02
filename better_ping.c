@@ -50,7 +50,6 @@ int main(int argc, char* argv[]) {
     socklen_t addr_len;
     ssize_t bytes_received = 0;
     size_t datalen;
-    clock_t timeofAccept;
 
     int socketfd = INVALID_SOCKET, status;
 
@@ -99,32 +98,19 @@ int main(int argc, char* argv[]) {
     // In parent process (better_ping).
     else
     {
+        // Wait some time until the watchdog will prepare it's own TCP socket.
+        usleep(WATCHDOG_WAITTIME);
+
         // Check if watchdog is still running.
         if (waitpid(pid, &status, WNOHANG) != 0){
             exit(EXIT_FAILURE);
         }
 
-        timeofAccept = clock();
-
         // Try to connect to the watchdog's socket.
-        while(connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == INVALID_SOCKET)
+        if (connect(wdsocketfd, (struct sockaddr*) &watchdogAddress, sizeof(watchdogAddress)) == INVALID_SOCKET)
         {
-            if (errno == ECONNREFUSED)
-            {
-                if (clock() - timeofAccept > (CLOCKS_PER_SEC / 5))
-                {
-                    // Recheck if watchdog still running.
-                    if (waitpid(pid, &status, WNOHANG) != 0){
-                        exit(EXIT_FAILURE);
-                    }
-                }
-            }
-
-            else
-            {
-                perror("connect");
-                exit(EXIT_FAILURE);
-            }
+            perror("connect");
+            exit(errno);
         }
 
         printf("PING %s: %ld data bytes\n", argv[1], datalen);

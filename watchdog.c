@@ -22,8 +22,8 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
+#include <sys/poll.h>
 #include <time.h>
-#include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
 #include <string.h>
@@ -34,13 +34,13 @@ int main() {
     // Varibles setup
     struct sockaddr_in wdAddress, pingAddress;
 
-    socklen_t pingAddressLen;
+    struct pollfd fd;
 
-    clock_t timeofAccept = 0;
+    socklen_t pingAddressLen;
 
     char SignalOK = '\0';
     
-    int socketfd = INVALID_SOCKET, pingSocket = INVALID_SOCKET, timer = 0, bytes_received = 0;
+    int socketfd = INVALID_SOCKET, pingSocket = INVALID_SOCKET, timer = 0, bytes_received = 0, res;
 
     // Prepare the TCP socket with the ping program (default port 3000).
     socketfd = setupTCPSocket(&wdAddress);
@@ -48,28 +48,29 @@ int main() {
     pingAddressLen = sizeof(pingAddress);
 
     // Accept the first connection request only.
-    timeofAccept = clock();
-    while ((pingSocket = accept(socketfd, (struct sockaddr *) &pingAddress, &pingAddressLen)) == INVALID_SOCKET)
+    fd.fd = socketfd;
+    fd.events = POLLIN;
+    res = poll(&fd, 1, 1000);
+
+    if (res == 0)
     {
-        // We set the TCP socket to non blocking, so we must check this.
-        if (errno == EWOULDBLOCK)
-        {
-            // Accept timeout - it was probably started alone and not via fork.
-            if (clock() - timeofAccept > (CLOCKS_PER_SEC / 10))
-            {
-                fprintf(stderr, "Watchdog internal error: please run better_ping.\n");
-                exit(errno);
-            }
+        fprintf(stderr, "Watchdog internal error: please run better_ping.\n");
+		exit(EXIT_FAILURE);
+    }
 
-            continue;
-        }
+    else if (res == -1)
+    {
+        perror("poll");
+        exit(EXIT_FAILURE);
+    }
 
-        // Some other error occured, exit.
-        else
-        {
-            perror("accept");
-            exit(errno);
-        }
+    else
+        pingSocket = accept(socketfd, (struct sockaddr *) &pingAddress, &pingAddressLen);
+
+    if (pingSocket == -1)
+    {
+        perror("accept");
+        exit(errno);
     }
 
     // Time functionality
@@ -132,9 +133,6 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
         exit(errno);
     }
 
-    // Sets the TCP socket to non-block.
-    setSocketNonBlocking(socketfd);
-
     if (bind(socketfd, (struct sockaddr *)socketAddress, sizeof(*socketAddress)) == -1)
     {
         // Prevents from executing the program twice.
@@ -143,9 +141,6 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
 
         else
             perror("bind");
-
-        // Sends interrupt (forces exit by default).
-        kill(getppid(), SIGINT);
 
         exit(errno);
     }
@@ -157,29 +152,6 @@ int setupTCPSocket(struct sockaddr_in *socketAddress) {
     }
 
     return socketfd;
-}
-
-int setSocketNonBlocking(int socketfd) {
-    int flags;
-
-    // First we need to get the current flags of the socket file descriptor.
-    if ((flags = fcntl(socketfd, F_GETFL, 0)) == -1)
-    {
-        perror("fcntl");
-        exit(errno);
-    }
-
-    // We set the flags include to a Non-Blocking I/O mode.
-    flags |= O_NONBLOCK;
-
-    // We set the new flags of the socket file descriptor.
-    if ((flags = fcntl(socketfd, F_SETFL, flags)) == -1)
-    {
-        perror("fcntl");
-        exit(errno);
-    }
-
-    return 1;
 }
 
 ssize_t sendTCPpacket(int socketfd, void* buffer, int len) {
